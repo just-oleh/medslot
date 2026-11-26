@@ -1,0 +1,434 @@
+openapi: 3.0.3
+info:
+  title: MedSlot API
+  version: 1.0.0
+  description: |
+    REST API застосунку MedSlot для онлайн-запису пацієнтів до лікарів.
+    Усі помилки повертаються в єдиному форматі `Error` (див. docs/error-handling.md).
+    Access-токен передається в заголовку `Authorization: Bearer <accessToken>`.
+servers:
+  - url: https://api.medslot.example/v1
+tags:
+  - name: Auth
+  - name: Doctors
+  - name: Appointments
+  - name: Admin
+
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Реєстрація пацієнта
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+      responses:
+        '201':
+          description: Акаунт створено, на email надіслано лист підтвердження
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserShort' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Вхід у систему
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Успішний вхід
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Оновлення access-токена
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        '200':
+          description: Нова пара токенів
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /doctors:
+    get:
+      tags: [Doctors]
+      summary: Пошук лікарів
+      operationId: searchDoctors
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: specialty, in: query, schema: { type: string }, example: therapist }
+        - { name: name, in: query, schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: size, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        '200':
+          description: Список лікарів
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Doctor' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /doctors/{doctorId}/slots:
+    get:
+      tags: [Doctors]
+      summary: Вільні слоти лікаря на дату
+      operationId: getDoctorSlots
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: doctorId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: date, in: query, required: true, schema: { type: string, format: date }, example: '2026-12-10' }
+      responses:
+        '200':
+          description: Вільні слоти
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Slot' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /slots/{slotId}/hold:
+    post:
+      tags: [Appointments]
+      summary: Тимчасово утримати слот (5 хвилин)
+      operationId: holdSlot
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: slotId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Слот утримано
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Hold' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /appointments:
+    post:
+      tags: [Appointments]
+      summary: Підтвердити запис на утримуваний слот
+      operationId: createAppointment
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Унікальний ключ запиту (UUID) для безпечних повторів
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAppointmentRequest' }
+      responses:
+        '201':
+          description: Запис підтверджено
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Appointment' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    get:
+      tags: [Appointments]
+      summary: Мої записи (історія та майбутні)
+      operationId: listMyAppointments
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [CONFIRMED, CANCELLED, COMPLETED, NO_SHOW] } }
+      responses:
+        '200':
+          description: Список записів
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Appointment' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /appointments/{appointmentId}:
+    delete:
+      tags: [Appointments]
+      summary: Скасувати запис (не пізніше ніж за 2 години)
+      operationId: cancelAppointment
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: appointmentId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Запис скасовано }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    patch:
+      tags: [Appointments]
+      summary: Перенести запис на інший слот
+      operationId: rescheduleAppointment
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: appointmentId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RescheduleRequest' }
+      responses:
+        '200':
+          description: Запис перенесено
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Appointment' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /slots/{slotId}/waitlist:
+    post:
+      tags: [Appointments]
+      summary: Стати в лист очікування на зайнятий слот
+      operationId: joinWaitlist
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: slotId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '201': { description: Додано в лист очікування }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /admin/doctors:
+    post:
+      tags: [Admin]
+      summary: Створити профіль лікаря
+      operationId: createDoctor
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDoctorRequest' }
+      responses:
+        '201':
+          description: Лікаря створено
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Doctor' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /admin/patients/{patientId}/block:
+    post:
+      tags: [Admin]
+      summary: Заблокувати акаунт пацієнта
+      operationId: blockPatient
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: patientId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Акаунт заблоковано }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    BadRequest:
+      description: 400. Запит має неправильний формат (некоректний JSON, тип або параметр)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: 401. Немає токена, він недійсний або прострочений, або неправильні облікові дані
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: 403. Недостатньо прав, чужий ресурс або акаунт заблоковано
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: 404. Ресурс не знайдено
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: 409. Конфлікт стану (слот зайнятий, дубль, ресурс уже змінено)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unprocessable:
+      description: 422. Формат правильний, але порушено бізнес-правила або валідацію полів
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TooManyRequests:
+      description: 429. Перевищено ліміт запитів
+      headers:
+        Retry-After:
+          description: Через скільки секунд можна повторити запит
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      required: [status, code, title, detail, traceId]
+      properties:
+        status: { type: integer, example: 409 }
+        code: { type: string, example: SLOT_ALREADY_HELD }
+        title: { type: string, example: Slot is not available }
+        detail: { type: string, example: Slot is currently held by another patient }
+        traceId: { type: string, example: 7f3c1b2e-9a44-4d0a-8b5f-0c2d1e6a9b10 }
+        errors:
+          type: array
+          description: Помилки окремих полів (для 400 і 422)
+          items:
+            type: object
+            properties:
+              field: { type: string, example: password }
+              message: { type: string, example: Must be 12 to 128 characters }
+    RegisterRequest:
+      type: object
+      required: [email, password, fullName]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 12, maxLength: 128 }
+        fullName: { type: string }
+        phone: { type: string }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+    RefreshRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string }
+    TokenPair:
+      type: object
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string }
+        expiresInSeconds: { type: integer, example: 900 }
+    UserShort:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        role: { type: string, enum: [PATIENT, DOCTOR, CLINIC_ADMIN] }
+    Doctor:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        fullName: { type: string }
+        specialty: { type: string }
+        clinicId: { type: string, format: uuid }
+    Slot:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        startTime: { type: string, format: date-time }
+        endTime: { type: string, format: date-time }
+        status: { type: string, enum: [FREE, HELD, BOOKED, CLOSED] }
+    Hold:
+      type: object
+      properties:
+        slotId: { type: string, format: uuid }
+        holdId: { type: string, format: uuid }
+        expiresAt: { type: string, format: date-time }
+    CreateAppointmentRequest:
+      type: object
+      required: [slotId, holdId]
+      properties:
+        slotId: { type: string, format: uuid }
+        holdId: { type: string, format: uuid }
+    RescheduleRequest:
+      type: object
+      required: [newSlotId]
+      properties:
+        newSlotId: { type: string, format: uuid }
+    CreateDoctorRequest:
+      type: object
+      required: [email, fullName, specialty, clinicId]
+      properties:
+        email: { type: string, format: email }
+        fullName: { type: string }
+        specialty: { type: string }
+        clinicId: { type: string, format: uuid }
+    Appointment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        slotId: { type: string, format: uuid }
+        doctorId: { type: string, format: uuid }
+        status: { type: string, enum: [CONFIRMED, CANCELLED, COMPLETED, NO_SHOW] }
+        createdAt: { type: string, format: date-time }
